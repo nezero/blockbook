@@ -143,6 +143,7 @@ func (s *WebsocketServer) GetHandler() http.Handler {
 }
 
 func (s *WebsocketServer) closeChannel(c *websocketChannel) {
+	glog.Info("closeChannel ", c.id, ", ", c.ip)
 	c.aliveLock.Lock()
 	defer c.aliveLock.Unlock()
 	if c.alive {
@@ -174,6 +175,7 @@ func (s *WebsocketServer) inputLoop(c *websocketChannel) {
 	for {
 		t, d, err := c.conn.ReadMessage()
 		if err != nil {
+			glog.Info("Error reading message from ", c.id, ", ", err)
 			s.closeChannel(c)
 			return
 		}
@@ -204,7 +206,19 @@ func (s *WebsocketServer) inputLoop(c *websocketChannel) {
 }
 
 func (s *WebsocketServer) outputLoop(c *websocketChannel) {
+	defer func() {
+		if r := recover(); r != nil {
+			glog.Error("recovered from panic: ", r, ", ", c.id)
+			s.closeChannel(c)
+		}
+	}()
+	maxcl := 0
 	for m := range c.out {
+		cl := len(c.out)
+		if cl > 5 && cl > maxcl {
+			maxcl = cl
+			glog.Info("c.out length: ", cl, ", ", c.id)
+		}
 		err := c.conn.WriteJSON(m)
 		if err != nil {
 			glog.Error("Error sending message to ", c.id, ", ", err)
@@ -389,9 +403,11 @@ func sendResponse(c *websocketChannel, req *websocketReq, data interface{}) {
 			glog.Error("Client ", c.id, ", onRequest ", req.Method, " recovered from panic: ", r)
 		}
 	}()
-	c.out <- &websocketRes{
-		ID:   req.ID,
-		Data: data,
+	if c.IsAlive() {
+		c.out <- &websocketRes{
+			ID:   req.ID,
+			Data: data,
+		}
 	}
 }
 
